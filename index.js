@@ -46,6 +46,7 @@ function getHeroesById() {
 }
 
 //Check if the requested product is available in Redis and return back response
+//getDataFromCache = (id) =>{
  function getDataFromCache(id){
      var client = redis.createClient(redisOptions);
      console.info('Connected to Redis Server')
@@ -56,11 +57,6 @@ function getHeroesById() {
          if (res !== null) {
              console.log("data available in cache");
              return res;
-         }
-         else {
-                console.log("data NOT available in cache");
-                return getHeroesById();
-             
          }
         }).catch(err => {
         //console.log('actorId'+actorId);    
@@ -114,6 +110,8 @@ function getDataFromDBForActors(ids,context){
 
 //Insert data returned from database into Redis cache
 function insertDataIntoCache(id,data){
+    console.log("id###"+id);
+    console.log("data###"+JSON.stringify(data));
      var client = redis.createClient(redisOptions);
      client.hmsetAsync(GLOBAL_KEY, id, data).then(res => {
         console.info('Redis responses for post: ', res)
@@ -125,19 +123,24 @@ function insertDataIntoCache(id,data){
         client.quit();
         });
         
+      /*  var client1 = redis.createClient(redisOptions);
+        
         console.log("record added");
-        client.hgetAsync(GLOBAL_KEY, id).then(res => {
-        console.info('Redis responses newly added record added : '+id, res);
-         if (res !== null) {
-             return res;
+        client1.hgetAsync(GLOBAL_KEY, id).then(res1 => {
+        console.info('Redis responses newly added record added : '+id, res1);
+         if (res1 !== null) {
+             return res1;
+         }
+         else {
+             console.log("result empty")
          }
         }).catch(err => {
         //console.log('actorId'+actorId);    
          console.error("Failed to get single result for id:", err)
         }).finally(() => {
         console.info('Disconnect to Redis added/retry');
-        client.quit();
-        });    
+        client1.quit();
+        }); */    
   
 }
 
@@ -146,10 +149,43 @@ function insertTableDataIntoCache(result){
      for (var i = 0; i < result.length; i++) { 
             console.log("result "+i+" is =" +JSON.stringify(result[i]));
              console.log("id "+i+" is =" + result[i].id);
-             insertDataIntoCache(result[i].id,JSON.stringify(result[i]));
+             insertDataIntoCache(result[i].id,result[i]);
      }
     
 }
+
+selectAllElements = (chars) =>{
+    console.log("entered SelectAllElements");
+    var query="select * from actors where id in (?)";
+    var data=chars;
+    var queryData=[data];
+    return new Promise((resolve, reject)=>{
+        connection.query(query,queryData, (error, result)=>{
+            if(error){
+                return reject(error);
+            }
+            console.log("results from db"+JSON.stringify(result))
+            return resolve(result);
+        });
+    });
+};
+
+
+ selectOneElement = (id) =>{
+    console.log("entered SelectOneElement");
+    var query="select * from actors where id in (?)";
+    var data=id;
+    var queryData=[data];
+    return new Promise((resolve, reject)=>{
+        connection.query(query,queryData, (error, result)=>{
+            if(error){
+                return reject(error);
+            }
+            console.log("single result results from db"+JSON.stringify(result))
+            return resolve(result);
+        });
+    });
+};
 
 
 // console.log(connection);
@@ -157,7 +193,7 @@ exports.handler =  async (event, context,callback) => {
   
     // allows for using callbacks as finish/error-handlers
    context.callbackWaitsForEmptyEventLoop = false;
-   console.log("eventbody###"+JSON.stringify(event.body));  
+   console.log("eventbodytest###"+JSON.stringify(event.body));  
    //console.log("flag"+event.body("USE_CACHE"));
    var parsedBody = JSON.parse(event.body);
    console.log("usecache flag###"+parsedBody.USE_CACHE);
@@ -172,11 +208,28 @@ exports.handler =  async (event, context,callback) => {
        console.log("cached flow");
    for (i = 0; i < chars.length; i++) { 
             console.log("id "+i+" is =" +chars[i]);
-            //let result=  await getDataFromCache(chars[i]);
+            let result=  await getDataFromCache(chars[i]);
+            if(null!=result){
+            cachedResult.push(result);
+            }
+            //If there is no data already available in cache, fetch data from database, store it in cache , return data from cache
+            else {
+                  //return getHeroesById();
+                const singleResult =  await selectOneElement(chars[i]);
+                console.log("data fetched from database"+JSON.stringify(singleResult));
+                //Adding new element into cache and returning the response from cache
+                const result= await insertDataIntoCache(chars[i],JSON.stringify(singleResult));
+                console.log("data fetched from database"+JSON.stringify(result));
+                let result1=  await getDataFromCache(chars[i]);
+                 console.log("data fetched from cache again"+JSON.stringify(result1));
+                if(null!=result1){
+                cachedResult.push(result1);
+                }
+            }    
             //let result;
             //console.log("result ####"+result)
              
-             //let response =  getDataFromCache(chars[i]);
+          /*   //let response =  getDataFromCache(chars[i]);
              var client = redis.createClient(redisOptions);
              console.info('Connected to Redis Server')
             //console.info("id ###"+id);
@@ -199,7 +252,7 @@ exports.handler =  async (event, context,callback) => {
             }).finally(() => {
             console.info('Disconnect to Redis');
             client.quit();
-            });
+            }); */
            
              
      }
@@ -211,7 +264,8 @@ exports.handler =  async (event, context,callback) => {
    
     return {
       statusCode: 200,
-      body:cachedResult
+      body:JSON.stringify(cachedResult),
+      isBase64Encoded: false
     }
    
    }
@@ -223,7 +277,18 @@ exports.handler =  async (event, context,callback) => {
          var query="select * from actors where id in (?)";
         var data=chars;
         var queryData=[data];
-        connection.query(query,queryData, function (err, result) {
+        const result = await selectAllElements(chars);
+        console.log("result elements"+JSON.stringify(result));
+        insertTableDataIntoCache(result); 
+        console.log("finished adding data into cache");
+        return {
+         statusCode: 200,
+         body:JSON.stringify(result),
+         isBase64Encoded: false
+          //"body": JSON.stringify(responseBody),
+         //"isBase64Encoded": false
+        }
+/*        connection.query(query,queryData, function (err, result) {
         //connection.query(sql, function (err, result) {
          if (err) {
              callback(null, {
@@ -238,7 +303,7 @@ exports.handler =  async (event, context,callback) => {
             body: result,
         })
     }
-  });
+  });*/
        
    }
    
