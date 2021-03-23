@@ -29,7 +29,7 @@ const redisOptions = {
 }
 redis.debug_mode = false;
 
-function getHeroesById(connection) {
+function getHeroesById() {
   console.log("entered getHeroesById");
   try{
   // Pretends ids is [1, 2]
@@ -37,7 +37,7 @@ function getHeroesById(connection) {
     'SELECT * from actors',
 
   );
-  console.log("result"+JSON.stringify(result));
+  console.log("result"+result);
   }
  catch(e) {
         console.log(e);
@@ -46,18 +46,21 @@ function getHeroesById(connection) {
 }
 
 //Check if the requested product is available in Redis and return back response
-function getDataFromCache(id){
+ function getDataFromCache(id){
      var client = redis.createClient(redisOptions);
      console.info('Connected to Redis Server')
-     console.info("id ###"+id);
+     //console.info("id ###"+id);
      var actorId=id;
-     client.hgetAsync(GLOBAL_KEY, id).then(res => {
-         console.info('Redis responses for get single: '+actorId, res);
+      return client.hgetAsync(GLOBAL_KEY, id).then(res => {
+         //console.info('Redis responses for get single: '+actorId, res);
          if (res !== null) {
-             
+             console.log("data available in cache");
+             return res;
          }
          else {
-             getDataFromDB(id);
+                console.log("data NOT available in cache");
+                return getHeroesById();
+             
          }
         }).catch(err => {
         //console.log('actorId'+actorId);    
@@ -72,15 +75,42 @@ function getDataFromCache(id){
 
 
 //Check if the requested product is available in Redis and return back response
-function getDataFromDB(id){
-    connection.query("SELECT * FROM actors where id="+id, function (err, result, fields) {
-    if (err) throw err;
-    console.log(JSON.stringify(result));
+async function getDataFromDBForActor(id){
+    console.log("entered getDataFromDBForActor to fetch data for"+id);
+    connection.query("SELECT * FROM actors where id="+id, function (err, result) {
+   if (err) {
+        console.log("encountered errorsss"+err);
+        throw err;
+    } 
+    console.log("data retrieved from mysql"+JSON.stringify(result));
     insertDataIntoCache(id,JSON.stringify(result));
-   
   });
   
 }
+
+
+//Check if the requested product is available in Redis and return back response
+function getDataFromDBForActors(ids,context){
+     context.callbackWaitsForEmptyEventLoop = false;
+    //select * from contents where user_is IN (?)", [result_array]
+    console.log("actos array"+ids);
+    var query="select * from actors where id in (?)";
+    var data=ids;
+    var queryData=[data];
+    connection.query(query,queryData, function (err, result) {
+     //connection.query("SELECT * FROM actors", function (err, result) {
+    //connection.query("SELECT * FROM actors where id="+id1, function (err, result, fields) {
+    if (err) {
+        console.log("encountered error"+err);
+        throw err;
+    } 
+    console.log("all table fetch"+JSON.stringify(result));
+    return result;
+    
+  });
+  
+}
+
 
 //Insert data returned from database into Redis cache
 function insertDataIntoCache(id,data){
@@ -94,23 +124,39 @@ function insertDataIntoCache(id,data){
         console.info('Disconnect to Redis');
         client.quit();
         });
+        
+        console.log("record added");
+        client.hgetAsync(GLOBAL_KEY, id).then(res => {
+        console.info('Redis responses newly added record added : '+id, res);
+         if (res !== null) {
+             return res;
+         }
+        }).catch(err => {
+        //console.log('actorId'+actorId);    
+         console.error("Failed to get single result for id:", err)
+        }).finally(() => {
+        console.info('Disconnect to Redis added/retry');
+        client.quit();
+        });    
   
+}
+
+function insertTableDataIntoCache(result){
+    console.log("insertTableDataIntoCache");
+     for (var i = 0; i < result.length; i++) { 
+            console.log("result "+i+" is =" +JSON.stringify(result[i]));
+             console.log("id "+i+" is =" + result[i].id);
+             insertDataIntoCache(result[i].id,JSON.stringify(result[i]));
+     }
+    
 }
 
 
 // console.log(connection);
-exports.handler = (event, context, callback) => {
+exports.handler =  async (event, context,callback) => {
   
-  /*
-  TO-D0
-  
-  1. Parse request to determine if USE-CACHE is true or false 
-  2. Parse the list of all sql that has list of id's for which data has to be fetched
-  3. If USE-CACHE is false, fetch the data directly from MySQL and return back the response.
-    Question : Should the data be updated in Redis as well? 
-  4. If USE-CACHE is true, check for each of the unique id if the data is available in Cache. If available, return response.
-  5. Continuing on 4 , if data is not available in cache, fetch the data from MySQL and store it in Cache and return response.
-  */
+    // allows for using callbacks as finish/error-handlers
+   context.callbackWaitsForEmptyEventLoop = false;
    console.log("eventbody###"+JSON.stringify(event.body));  
    //console.log("flag"+event.body("USE_CACHE"));
    var parsedBody = JSON.parse(event.body);
@@ -118,123 +164,90 @@ exports.handler = (event, context, callback) => {
    console.log("sql ids###"+parsedBody.SQLS);
    console.log("request type###"+parsedBody.REQUEST);
    var chars = parsedBody.SQLS;
+   var cachedResult = [];
    var i;
+   let result;
+   //Request is for the data to be retrieved from Redis Cache
+   if(parsedBody.USE_CACHE == "True"){
+       console.log("cached flow");
    for (i = 0; i < chars.length; i++) { 
             console.log("id "+i+" is =" +chars[i]);
-            getDataFromCache(chars[i]);
+            //let result=  await getDataFromCache(chars[i]);
+            //let result;
+            //console.log("result ####"+result)
+             
+             //let response =  getDataFromCache(chars[i]);
+             var client = redis.createClient(redisOptions);
+             console.info('Connected to Redis Server')
+            //console.info("id ###"+id);
+             await client.hgetAsync(GLOBAL_KEY, chars[i]).then(res => {
+             console.info('Redis responses for get single 111: '+chars[i], res);
+             if (res !== null) {
+                 console.log("data available in cache");
+                 cachedResult.push(res);
+                 console.log("cached Result size"+cachedResult.length);
+                //return res;
+             }
+             else {
+                    console.log("data NOT available in cache");
+                    //return getHeroesById();
+                 
+             }
+            }).catch(err => {
+            //console.log('actorId'+actorId);    
+             console.error("Failed to get single result for id:", err)
+            }).finally(() => {
+            console.info('Disconnect to Redis');
+            client.quit();
+            });
+           
+             
+     }
+     
+     for (i = 0; i < cachedResult.length; i++) { 
+            console.log("cachedResult "+i+" is =" +cachedResult[i]);
             
      }
-
-  console.log('inside lambda...');
-  // allows for using callbacks as finish/error-handlers
-  context.callbackWaitsForEmptyEventLoop = false;
-  const sql = "select * from actors";
-//getHeroesById(connection);
- /*connection.query(sql, function (err, result) {
-    if (err) {
-       callback(null, {
+   
+    return {
+      statusCode: 200,
+      body:cachedResult
+    }
+   
+   }
+   //Request is for the data to be retrieved from Database
+   else {
+       //console.log("cache is false");
+        //result= getDataFromDBForActors(chars,context);
+        //console.log("sql db fetch"+result)
+         var query="select * from actors where id in (?)";
+        var data=chars;
+        var queryData=[data];
+        connection.query(query,queryData, function (err, result) {
+        //connection.query(sql, function (err, result) {
+         if (err) {
+             callback(null, {
             statusCode: 400,
             body: JSON.stringify(err),
-        })
-    }
-    else{
-    callback(null, {
+             })
+         }
+        else{
+        insertTableDataIntoCache(result);    
+        callback(null, {
             statusCode: 200,
-            body: JSON.stringify(result),
+            body: result,
         })
     }
-  });*/
-    
-    
-    
+  });
+       
+   }
+   
+   
 
-  
-    /* var client = redis.createClient(redisOptions);
-    console.info('Connected to Redis Server')
-    console.info('event.pathParameters: ', event.pathParameters);
-    console.info('event.httpMethod: ', event.httpMethod);
-    let id = (event.pathParameters || {}).product || false;
-    let data = event.data;
-
-    switch (event.httpMethod) {
-
-        case "GET":
-            if (id) {
-                console.info('get by id')
-                client.hgetAsync(GLOBAL_KEY, id).then(res => {
-                    console.info('Redis responses for get single: ', res);
-                    callback(null, {body:  "This is a READ operation on product ID " + id, ret: res});
-                    // callback(null, {body: "This is a READ operation on product ID " + id});
-                }).catch(err => {
-                    console.error("Failed to get single: ", err)
-                    callback(null, {statusCode: 500, message: "Failed to get data"});
-                }).finally(() => {
-                    console.info('Disconnect to Redis');
-                    client.quit();
-                });
-
-                return;
-            } else {
-                console.info('get all')
-                client.hgetallAsync(GLOBAL_KEY).then(res => {
-                    console.info('Redis responses for get all: ', res)
-                    callback(null, {body: "This is a LIST operation, return all products", ret: res});
-                    // callback(null, {body: "This is a LIST operation, return all products"});
-                }).catch(err => {
-                    console.error("Failed to post data: ", err)
-                    callback(null, {statusCode: 500, message: "Failed to get data"});
-                }).finally(() => {
-                    console.info('Disconnect to Redis');
-                    client.quit();
-                });
-            }
-            break;
-
-        case "POST":
-            if (data) {
-                console.info('Posting data for [', id, '] with value: ', data);
-                client.hmsetAsync(GLOBAL_KEY, id, data).then(res => {
-                    console.info('Redis responses for post: ', res)
-                    callback(null, {body: "This is a CREATE operation and it's successful", ret: res});
-                    // callback(null, {body: "This is a CREATE operation"});
-                }).catch(err => {
-                    console.error("Failed to post data: ", err)
-                    callback(null, {statusCode: 500, message: "Failed to post data"});
-                }).finally(() => {
-                    console.info('Disconnect to Redis');
-                    client.quit();
-                });
-            }
-            else {
-                callback(null, {statusCode: 500, message: 'no data is posted'})
-            }
-            break;
-
-        case "PUT":
-            callback(null, {body: "This is an UPDATE operation on product ID " + id});
-            break;
-
-        case "DELETE":
-            console.info('delete a prod');
-            client.delAsync(GLOBAL_KEY).then(res => {
-                console.info('Redis responses for get single: ', res);
-                callback(null, {body:  "This is a DELETE operation on product ID " + id, ret: res});
-                // callback(null, {body: "This is a DELETE operation on product ID " + id});
-            }).catch(err => {
-                console.error("Failed to delete single: ", err);
-                callback(null, {statusCode: 500, message: "Failed to delete data"});
-            }).finally(() => {
-                console.info('Disconnect to Redis');
-                client.quit();
-            });
-
-            break;
-
-        default:
-            // Send HTTP 501: Not Implemented
-            console.log("Error: unsupported HTTP method (" + event.httpMethod + ")");
-            callback(null, {statusCode: 501})
-    }
-  */
+  //console.log('inside lambda...');
+  // allows for using callbacks as finish/error-handlers
+  //context.callbackWaitsForEmptyEventLoop = false;
+ // const sql = "select * from actors";
+//getHeroesById(connection);
 
 };
