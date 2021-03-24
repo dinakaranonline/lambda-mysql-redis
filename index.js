@@ -4,6 +4,7 @@ var bluebird = require('bluebird');
 bluebird.promisifyAll(redis.RedisClient.prototype);
 bluebird.promisifyAll(redis.Multi.prototype);
 
+//Aurora MYSQL Database connection
 const connection = mysql.createConnection({
     //following param coming from aws lambda env variable 
     host: process.env.DB_CLUSTER_URL,
@@ -21,6 +22,8 @@ const connection = mysql.createConnection({
 
 });
 
+
+//Elasticache Redis Global key and server configuration 
 const GLOBAL_KEY = 'actorskey';
 
 const redisOptions = {
@@ -29,8 +32,7 @@ const redisOptions = {
 }
 redis.debug_mode = false;
 
-//Check if the requested product is available in Redis and return back response
-//getDataFromCache = (id) =>{
+//Check if the requested product is available in Redis cache and return back response
 function getDataFromCache(id) {
     var client = redis.createClient(redisOptions);
     console.info('Connected to Redis Server')
@@ -55,7 +57,7 @@ function getDataFromCache(id) {
 
 
 //Check if the requested product is available in Redis and return back response
-async function getDataFromDBForActor(id) {
+/*async function getDataFromDBForActor(id) {
     console.log("entered getDataFromDBForActor to fetch data for" + id);
     connection.query("SELECT * FROM actors where id=" + id, function (err, result) {
         if (err) {
@@ -86,10 +88,10 @@ function getDataFromDBForActors(ids, context) {
 
     });
 
-}
+} */
 
 
-//Insert data returned from database into Redis cache
+//Insert every single record returned from database into Redis cache
 function insertDataIntoCache(id, data) {
     console.log("id###" + id);
     console.log("data###" + JSON.stringify(data));
@@ -105,6 +107,8 @@ function insertDataIntoCache(id, data) {
     });
 }
 
+//Preparing records returned from database to be inserted into Redis Cache one by one
+
 function insertTableDataIntoCache(result) {
     console.log("insertTableDataIntoCache");
     for (var i = 0; i < result.length; i++) {
@@ -114,7 +118,7 @@ function insertTableDataIntoCache(result) {
     }
 
 }
-
+//Fetching  the requested records in the payload from Aurora MySQL database
 selectAllElements = (chars) => {
     console.log("entered SelectAllElements");
     var query = "select * from actors where id in (?)";
@@ -131,7 +135,7 @@ selectAllElements = (chars) => {
     });
 };
 
-
+//Fetching  the requested record that is missing in the cache
 selectOneElement = (id) => {
     console.log("entered SelectOneElement");
     var query = "select * from actors where id in (?)";
@@ -149,7 +153,7 @@ selectOneElement = (id) => {
 };
 
 
-// console.log(connection);
+//Main Handler function that receives the request from API Gateway and performs the processing
 exports.handler = async (event, context, callback) => {
 
     // allows for using callbacks as finish/error-handlers
@@ -187,11 +191,11 @@ exports.handler = async (event, context, callback) => {
                 }
             }
         }
-
-        for (i = 0; i < cachedResult.length; i++) {
+        
+        /*for (i = 0; i < cachedResult.length; i++) {
             console.log("cachedResult " + i + " is =" + cachedResult[i]);
 
-        }
+        }*/
 
         return {
             statusCode: 200,
@@ -211,8 +215,6 @@ exports.handler = async (event, context, callback) => {
             statusCode: 200,
             body: JSON.stringify(result),
             isBase64Encoded: false
-            //"body": JSON.stringify(responseBody),
-            //"isBase64Encoded": false
         }
     }
 };
