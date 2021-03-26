@@ -100,6 +100,24 @@ selectAllElements = (chars) => {
 };
 
 //Fetching  the requested record that is missing in the cache
+selectOneElement = (id) => {
+    console.log("entered SelectOneElement");
+    var query = "select * from actors where id in (?)";
+    var data = id;
+    var queryData = [data];
+    return new Promise((resolve, reject) => {
+        connection.query(query, queryData, (error, result) => {
+            if (error) {
+                return reject(error);
+            }
+            console.log("single result results from db" + JSON.stringify(result))
+            return resolve(result[0]);
+        });
+    });
+};
+
+
+//Fetching  the requested record that is missing in the cache
 findMaxId = () => {
     console.log("entered findMaxId");
     var query = "select max(id) as maxID from actors";
@@ -153,6 +171,8 @@ exports.handler = async (event, context, callback) => {
     console.log("eventbodytest###" + JSON.stringify(event.body));
     context.callbackWaitsForEmptyEventLoop = false;
     var parsedBody = JSON.parse(event.body);
+    //Write flow to insert data into the database 
+    if(parsedBody.REQUEST == "write"){
     console.log("usecache flag###" + parsedBody.USE_CACHE);
     console.log("json parse sqls"+JSON.stringify(parsedBody.SQLS));
     console.log("request type###" + parsedBody.REQUEST);
@@ -180,14 +200,77 @@ exports.handler = async (event, context, callback) => {
             console.log("cached flow");
             insertTableDataIntoCache(fetchRecords);
         }
+        
+        var resObj={"statusCode":200,"body":"write success"};
    
         
         return {
             statusCode: 200,
-            body: JSON.stringify(fetchRecords),
+            body: JSON.stringify(resObj),
             isBase64Encoded: false
         }
       
-   
-   
+    }
+   //Read flow to fetch data from the database
+   else {
+    console.log("usecache flag###" + parsedBody.USE_CACHE);
+    console.log("sql ids###" + parsedBody.SQLS);
+    console.log("request type###" + parsedBody.REQUEST);
+    var chars = parsedBody.SQLS;
+    var cachedResult = [];
+    var i;
+    let result;
+    //Request is for the data to be retrieved from Redis Cache
+    if (parsedBody.USE_CACHE == "True") {
+        console.log("cached flow");
+        for (i = 0; i < chars.length; i++) {
+            console.log("id " + i + " is =" + chars[i]);
+            let result = await getDataFromCache(chars[i]);
+            if (null != result) {
+                cachedResult.push(JSON.parse(result));
+            }
+            //If there is no data already available in cache, fetch data from database, store it in cache , return data from cache
+            else {
+                const singleResult = await selectOneElement(chars[i]);
+                console.log("data fetched from database" + JSON.stringify(singleResult));
+                //Adding new element into cache and returning the response from cache
+                const result = await insertDataIntoCache(chars[i], singleResult);
+                console.log("data fetched from database" + JSON.stringify(result));
+                let result1 = await getDataFromCache(chars[i]);
+                console.log("data fetched from cache again" + JSON.stringify(result1));
+                if (null != result1) {
+                    cachedResult.push(JSON.parse(result1));
+                }
+            }
+        }
+        
+        for (i = 0; i < cachedResult.length; i++) {
+            console.log("cachedResult " + i + " is =" + cachedResult[i]);
+
+        }
+        
+        var resObj1={"statusCode":200,"body":cachedResult};
+
+        return {
+            statusCode: 200,
+            body: JSON.stringify(resObj1),
+            isBase64Encoded: false
+        }
+
+    }
+    //Request is for the data to be retrieved from Database
+    else {
+        //console.log("cache is false");
+        const result = await selectAllElements(chars);
+        console.log("result elements" + JSON.stringify(result));
+        insertTableDataIntoCache(result);
+        console.log("finished adding data into cache");
+        var resObj2={"statusCode":200,"body":result};
+        return {
+            statusCode: 200,
+            body: JSON.stringify(resObj2),
+            isBase64Encoded: false
+        }
+    }
+   }
 };
